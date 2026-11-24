@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 project(ClubMaster VERSION 1.0.0)
 set(CMAKE_CXX_STANDARD 17)
 add_subdirectory(JUCE)
+juce_generate_juce_header(ClubMaster)
 juce_add_plugin(ClubMaster
     COMPANY_NAME "JaxDJLatino"
     PLUGIN_MANUFACTURER_CODE JaxD
