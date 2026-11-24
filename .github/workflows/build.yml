@@ -1,0 +1,21 @@
+name: Build ClubMaster VST3 AU
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+jobs:
+  build-mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone JUCE
+        run: git clone --depth 1 https://github.com/juce-framework/JUCE
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Upload VST3 AU
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClubMaster-macOS-VST3-AU
+          path: build/ClubMaster_artefacts/Release/
