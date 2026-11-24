@@ -56,7 +56,7 @@ void ClubMasterAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, ju
     for (int s = 0; s < N; s++)
         for (int c = 0; c < Ch; c++)
         {
-            float v = kFilter[c].processSingleSampleRaw(buffer.getSample(c, s) * inGain);
+            float v = kFilter[c].processSample(buffer.getSample(c, s) * inGain);
             sum += v * v; cnt++;
         }
     float rms = cnt ? std::sqrt(sum / cnt) : 0.f;
