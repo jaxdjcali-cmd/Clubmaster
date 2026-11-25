@@ -5,13 +5,13 @@ on:
     branches: [ main ]
 jobs:
   build-mac:
-       runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: Clone JUCE
         run: git clone --depth 1 https://github.com/juce-framework/JUCE
       - name: Configure
-                run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
       - name: Build
         run: cmake --build build --config Release
       - name: Upload VST3 AU
