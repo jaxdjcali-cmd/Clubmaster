@@ -35,7 +35,6 @@ void ClubMasterAudioProcessor::releaseResources() {}
 
 static inline float softClipClean(float x)
 {
-    // Solo suaviza los picos por encima de 0.7, el resto pasa limpio
     float ax = std::abs(x);
     if (ax <= 0.7f) return x;
     float sign = x > 0 ? 1.f : -1.f;
@@ -49,6 +48,7 @@ void ClubMasterAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, ju
     for (auto i = getTotalNumInputChannels(); i < getTotalNumOutputChannels(); ++i)
         buffer.clear(i, 0, buffer.getNumSamples());
     float inputGainDb = *apvts.getRawParameterValue("input");
+    int mode = (int)*apvts.getRawParameterValue("mode");
     float ceilingDb = *apvts.getRawParameterValue("ceiling");
     float releaseMs = *apvts.getRawParameterValue("release");
     float inGain = juce::Decibels::decibelsToGain(inputGainDb);
@@ -64,28 +64,40 @@ void ClubMasterAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, ju
     float meas = rms > 1e-9f ? 20 * std::log10(rms) - 0.691f : -70.f;
     currentLUFS = 0.9f * currentLUFS + 0.1f * meas;
     float ceiling = juce::Decibels::decibelsToGain(ceilingDb);
+    // THRESHOLD POR MODO: para que el GR trabaje sin tener que subir a +8
+    // Squash trabaja desde -3dB, Club desde -6dB, Streaming desde -10dB
+    float thresholdDb = mode == 0 ? -3.f : (mode == 2 ? -10.f : -6.f);
+    float threshold = juce::Decibels::decibelsToGain(thresholdDb);
     float releaseCoeff = std::exp(-1.0f / (float)(sampleRate * releaseMs / 1000.f));
-    float rmsCoeff = std::exp(-1.0f / (float)(sampleRate * 0.05f));
+    float rmsCoeff = std::exp(-1.0f / (float)(sampleRate * 0.02f)); // 20ms, mas rapido para que el GR se vea
     float peak = 0.f;
+    float peakGR = 0.f;
     const int lookaheadSamples = 96;
     for (int s = 0; s < N; s++)
     {
         float inL = buffer.getSample(0, s) * inGain;
         float inR = Ch > 1 ? buffer.getSample(1, s) * inGain : inL;
-        // LIMPIO: solo suaviza picos, no satura todo
         float satL = softClipClean(inL);
         float satR = softClipClean(inR);
         float detL = sidechainFilter[0].processSample(satL);
         float detR = Ch > 1 ? sidechainFilter[1].processSample(satR) : detL;
         float det = std::max(std::abs(detL), std::abs(detR));
+        // Detector PEAK para el GR, no solo RMS, asi se ve enseguida
+        float peakDet = std::max(det, rmsEnvelope);
         rmsEnvelope = rmsCoeff * rmsEnvelope + (1.f - rmsCoeff) * (det * det);
         float rmsDet = std::sqrt(rmsEnvelope);
-        if (rmsDet > envelope) { envelope = rmsDet; holdCounter = (int)(sampleRate * 0.03f); }
+        float combined = std::max(rmsDet, peakDet * 0.6f);
+        if (combined > envelope) { envelope = combined; holdCounter = (int)(sampleRate * 0.03f); }
         else if (holdCounter > 0) { holdCounter--; }
-        else { envelope = envelope * releaseCoeff + rmsDet * (1.f - releaseCoeff); }
-        float targetGain = envelope > ceiling ? ceiling / envelope : 1.f;
-        if (targetGain < smoothedGain) smoothedGain = 0.7f * smoothedGain + 0.3f * targetGain;
-        else smoothedGain += (1.0f - smoothedGain) * (1 - releaseCoeff) * 0.15f;
+        else { envelope = envelope * releaseCoeff + combined * (1.f - releaseCoeff); }
+        // GR contra THRESHOLD (no contra ceiling), asi trabaja antes
+        float targetGain = envelope > threshold ? threshold / envelope : 1.f;
+        // Pero el techo final sigue siendo el ceiling, para no clipear
+        float hardLimit = envelope * targetGain > ceiling ? ceiling / (envelope * targetGain) : 1.f;
+        targetGain *= hardLimit;
+        if (targetGain < smoothedGain) smoothedGain = 0.6f * smoothedGain + 0.4f * targetGain;
+        else smoothedGain += (1.0f - smoothedGain) * (1 - releaseCoeff) * 0.2f;
+        peakGR = std::min(peakGR, 20 * std::log10(std::max(smoothedGain, 1e-4f)));
         lookaheadBuffer.setSample(0, lookaheadPos, satL * smoothedGain);
         if (Ch > 1) lookaheadBuffer.setSample(1, lookaheadPos, satR * smoothedGain);
         int readPos = (lookaheadPos - lookaheadSamples + 256) % 256;
@@ -99,7 +111,7 @@ void ClubMasterAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, ju
         lookaheadPos = (lookaheadPos + 1) % 256;
     }
     truePeakDb = 20 * std::log10(std::max(peak, 1e-9f));
-    grDb = 20 * std::log10(std::max(smoothedGain, 1e-4f));
+    grDb = peakGR;
 }
 
 juce::AudioProcessorEditor* ClubMasterAudioProcessor::createEditor() { return new ClubMasterAudioProcessorEditor(*this); }
