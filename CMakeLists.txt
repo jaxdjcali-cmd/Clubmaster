@@ -10,5 +10,6 @@ juce_add_plugin(ClubMaster
     PRODUCT_NAME "Club Master"
     IS_SYNTH FALSE NEEDS_MIDI_INPUT FALSE)
 juce_generate_juce_header(ClubMaster)
+target_compile_definitions(ClubMaster PRIVATE JUCE_VST3_CAN_REPLACE_VST2=0)
 target_sources(ClubMaster PRIVATE Source/PluginProcessor.cpp Source/PluginEditor.cpp)
 target_link_libraries(ClubMaster PRIVATE juce::juce_audio_utils juce::juce_audio_processors juce::juce_dsp juce::juce_gui_basics)
