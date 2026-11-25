@@ -113,7 +113,7 @@ void ClubMasterAudioProcessorEditor::paint(juce::Graphics& g)
     };
     drawLEDMeter(28, 110, 520, smoothLUFS, -30, 0, "LUFS INTEGRATED", juce::String(smoothLUFS, 1) + " LUFS");
     drawLEDMeter(28, 162, 520, smoothPeak, -30, 0, "TRUE PEAK", juce::String(smoothPeak, 1) + " dBTP");
-    drawLEDMeter(28, 214, 520, smoothGR, -12, 0, "GAIN REDUCTION", juce::String(smoothGR, 1) + " dB");
+    drawLEDMeter(28, 214, 520, -smoothGR, 0, 12, "GAIN REDUCTION", juce::String(smoothGR, 1) + " dB");
     // SEPARADOR
     g.setColour(juce::Colour(0xff2a2a35));
     g.fillRect(28, 268, 520, 1);
