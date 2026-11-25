@@ -33,17 +33,25 @@ void ClubMasterAudioProcessor::prepareToPlay(double sr, int)
 }
 void ClubMasterAudioProcessor::releaseResources() {}
 
+static inline float softClipClean(float x)
+{
+    // Solo suaviza los picos por encima de 0.7, el resto pasa limpio
+    float ax = std::abs(x);
+    if (ax <= 0.7f) return x;
+    float sign = x > 0 ? 1.f : -1.f;
+    float t = (ax - 0.7f) / 0.3f;
+    return sign * (0.7f + 0.3f * std::tanh(t * 1.2f) / std::tanh(1.2f));
+}
+
 void ClubMasterAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
     for (auto i = getTotalNumInputChannels(); i < getTotalNumOutputChannels(); ++i)
         buffer.clear(i, 0, buffer.getNumSamples());
     float inputGainDb = *apvts.getRawParameterValue("input");
-    int mode = (int)*apvts.getRawParameterValue("mode");
     float ceilingDb = *apvts.getRawParameterValue("ceiling");
     float releaseMs = *apvts.getRawParameterValue("release");
     float inGain = juce::Decibels::decibelsToGain(inputGainDb);
-    float drive = mode == 0 ? 1.6f : (mode == 2 ? 1.05f : 1.25f);
     const int N = buffer.getNumSamples(), Ch = buffer.getNumChannels();
     double sum = 0; int cnt = 0;
     for (int s = 0; s < N; s++)
@@ -57,28 +65,25 @@ void ClubMasterAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, ju
     currentLUFS = 0.9f * currentLUFS + 0.1f * meas;
     float ceiling = juce::Decibels::decibelsToGain(ceilingDb);
     float releaseCoeff = std::exp(-1.0f / (float)(sampleRate * releaseMs / 1000.f));
-    float rmsCoeff = std::exp(-1.0f / (float)(sampleRate * 0.05f)); // Ventana RMS 50ms = no reacciona a cada kick
+    float rmsCoeff = std::exp(-1.0f / (float)(sampleRate * 0.05f));
     float peak = 0.f;
     const int lookaheadSamples = 96;
     for (int s = 0; s < N; s++)
     {
         float inL = buffer.getSample(0, s) * inGain;
         float inR = Ch > 1 ? buffer.getSample(1, s) * inGain : inL;
-        float satL = std::tanh(inL * drive) / std::tanh(drive);
-        float satR = std::tanh(inR * drive) / std::tanh(drive);
-        // DETECTOR: pasa por filtro 120Hz, asi el kick NO dispara el compresor
+        // LIMPIO: solo suaviza picos, no satura todo
+        float satL = softClipClean(inL);
+        float satR = softClipClean(inR);
         float detL = sidechainFilter[0].processSample(satL);
         float detR = Ch > 1 ? sidechainFilter[1].processSample(satR) : detL;
         float det = std::max(std::abs(detL), std::abs(detR));
-        // RMS 50ms: suave, musical, sin pumping
         rmsEnvelope = rmsCoeff * rmsEnvelope + (1.f - rmsCoeff) * (det * det);
         float rmsDet = std::sqrt(rmsEnvelope);
-        // Envelope con HOLD 30ms: no sube y baja con cada golpe
         if (rmsDet > envelope) { envelope = rmsDet; holdCounter = (int)(sampleRate * 0.03f); }
         else if (holdCounter > 0) { holdCounter--; }
         else { envelope = envelope * releaseCoeff + rmsDet * (1.f - releaseCoeff); }
         float targetGain = envelope > ceiling ? ceiling / envelope : 1.f;
-        // Suavizado del gain: ataque rapido, release lento, sin bombeo
         if (targetGain < smoothedGain) smoothedGain = 0.7f * smoothedGain + 0.3f * targetGain;
         else smoothedGain += (1.0f - smoothedGain) * (1 - releaseCoeff) * 0.15f;
         lookaheadBuffer.setSample(0, lookaheadPos, satL * smoothedGain);
