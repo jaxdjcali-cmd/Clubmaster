@@ -36,6 +36,7 @@ private:
     int holdCounter = 0;
     juce::AudioBuffer<float> lookaheadBuffer;
     int lookaheadPos = 0;
+    juce::dsp::IIR::Filter<float> kFilter[2];
     juce::dsp::IIR::Filter<float> sidechainFilter[2];
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ClubMasterAudioProcessor)
 };
