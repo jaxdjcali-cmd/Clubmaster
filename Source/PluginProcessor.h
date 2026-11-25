@@ -32,8 +32,10 @@ private:
     double sampleRate = 48000.0;
     float currentLUFS = -20.f, truePeakDb = -60.f, grDb = 0.f;
     float envelope = 0.f, smoothedGain = 1.f;
+    float rmsEnvelope = 0.f;
+    int holdCounter = 0;
     juce::AudioBuffer<float> lookaheadBuffer;
     int lookaheadPos = 0;
-    juce::dsp::IIR::Filter<float> kFilter[2];
+    juce::dsp::IIR::Filter<float> sidechainFilter[2];
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ClubMasterAudioProcessor)
 };
