@@ -1,117 +1,61 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
-ClubMasterAudioProcessor::ClubMasterAudioProcessor()
-    : AudioProcessor(BusesProperties().withInput("Input", juce::AudioChannelSet::stereo(), true)
-                                     .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
-      apvts(*this, nullptr, "PARAMS", createParams())
+ClubMasterAudioProcessorEditor::ClubMasterAudioProcessorEditor(ClubMasterAudioProcessor& p)
+    : AudioProcessorEditor(&p), audioProcessor(p)
 {
+    setSize(620, 380);
+    startTimerHz(15);
+    addAndMakeVisible(inputKnob);
+    inputKnob.setRange(-12, 12, 0.1);
+    inputKnob.setTextValueSuffix(" dB");
+    addAndMakeVisible(modeBox);
+    modeBox.addItemList({ "Squash Loud -7 LUFS", "Club Ready -9 LUFS (recomendado)", "Streaming -14 LUFS" }, 1);
+    addAndMakeVisible(ceilingSlider);
+    ceilingSlider.setRange(-3, -0.1, 0.1);
+    ceilingSlider.setTextValueSuffix(" dBTP");
+    addAndMakeVisible(releaseSlider);
+    releaseSlider.setRange(20, 500, 1);
+    releaseSlider.setTextValueSuffix(" ms");
+    addAndMakeVisible(linkSlider);
+    linkSlider.setRange(0, 1, 0.01);
+    addAndMakeVisible(hqButton);
+    addAndMakeVisible(lufsLabel);
+    addAndMakeVisible(peakLabel);
+    addAndMakeVisible(grLabel);
+    a1 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "input", inputKnob);
+    aMode = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(audioProcessor.apvts, "mode", modeBox);
+    a2 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "ceiling", ceilingSlider);
+    a3 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "release", releaseSlider);
+    a4 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "link", linkSlider);
+    aHq = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(audioProcessor.apvts, "quality", hqButton);
 }
-
-ClubMasterAudioProcessor::~ClubMasterAudioProcessor() {}
-
-juce::AudioProcessorValueTreeState::ParameterLayout ClubMasterAudioProcessor::createParams()
+ClubMasterAudioProcessorEditor::~ClubMasterAudioProcessorEditor() { stopTimer(); }
+void ClubMasterAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    std::vector<std::unique_ptr<juce::RangedAudioParameter>> p;
-    p.push_back(std::make_unique<juce::AudioParameterFloat>("input", "Input Gain", -12.f, 12.f, 0.f));
-    p.push_back(std::make_unique<juce::AudioParameterChoice>("mode", "Master Mode",
-        juce::StringArray{ "Squash Loud (-7 LUFS)", "Club Ready (-9 LUFS)", "Streaming (-14 LUFS)" }, 1));
-    p.push_back(std::make_unique<juce::AudioParameterFloat>("ceiling", "True-Peak Ceiling", -3.f, -0.1f, -1.f));
-    p.push_back(std::make_unique<juce::AudioParameterFloat>("release", "Release", 20.f, 500.f, 120.f));
-    p.push_back(std::make_unique<juce::AudioParameterFloat>("link", "Stereo Link", 0.f, 1.f, 0.7f));
-    p.push_back(std::make_unique<juce::AudioParameterBool>("quality", "HQ", false));
-    return { p.begin(), p.end() };
+    g.fillAll(juce::Colour(0xff111111));
+    g.setColour(juce::Colours::white);
+    g.setFont(22.f);
+    g.drawText("CLUB MASTER - Mastering para DJs", 10, 10, 600, 30, juce::Justification::left);
+    g.setFont(13.f);
+    g.setColour(juce::Colours::lightgrey);
+    g.drawText("1. Pon el Input en la marca  2. Elige tu master", 10, 38, 600, 20, juce::Justification::left);
 }
-
-void ClubMasterAudioProcessor::prepareToPlay(double sr, int)
+void ClubMasterAudioProcessorEditor::resized()
 {
-    sampleRate = sr;
-    auto coeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass(sr, 38.0f);
-    for (auto& f : kFilter) f.coefficients = coeffs;
-    envelope = 0.f; autoGain = 1.f; smoothedGain = 1.f;
-    currentLUFS = -20.f; truePeakDb = -60.f; grDb = 0.f;
+    inputKnob.setBounds(30, 80, 150, 150);
+    modeBox.setBounds(220, 80, 360, 30);
+    ceilingSlider.setBounds(220, 130, 360, 30);
+    releaseSlider.setBounds(220, 175, 360, 30);
+    linkSlider.setBounds(220, 220, 360, 30);
+    hqButton.setBounds(220, 265, 80, 25);
+    lufsLabel.setBounds(30, 250, 160, 25);
+    peakLabel.setBounds(30, 280, 160, 25);
+    grLabel.setBounds(30, 310, 160, 25);
 }
-
-void ClubMasterAudioProcessor::releaseResources() {}
-
-void ClubMasterAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+void ClubMasterAudioProcessorEditor::timerCallback()
 {
-    juce::ScopedNoDenormals noDenormals;
-    auto totalNumInputChannels = getTotalNumInputChannels();
-    auto totalNumOutputChannels = getTotalNumOutputChannels();
-    for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
-        buffer.clear(i, 0, buffer.getNumSamples());
-
-    float inputGainDb = *apvts.getRawParameterValue("input");
-    int mode = (int)*apvts.getRawParameterValue("mode");
-    float targetLUFS = mode == 0 ? -7.f : (mode == 2 ? -14.f : -9.f);
-    float ceilingDb = *apvts.getRawParameterValue("ceiling");
-    float releaseMs = *apvts.getRawParameterValue("release");
-
-    float inGain = juce::Decibels::decibelsToGain(inputGainDb);
-    const int N = buffer.getNumSamples(), Ch = buffer.getNumChannels();
-
-    // 1) Medir LUFS aprox
-    double sum = 0; int cnt = 0;
-    for (int s = 0; s < N; s++)
-        for (int c = 0; c < Ch; c++)
-        {
-            float v = kFilter[c].processSingleSampleRaw(buffer.getSample(c, s) * inGain);
-            sum += v * v; cnt++;
-        }
-    float rms = cnt ? std::sqrt(sum / cnt) : 0.f;
-    float meas = rms > 1e-9f ? 20 * std::log10(rms) - 0.691f : -70.f;
-    currentLUFS = 0.9f * currentLUFS + 0.1f * meas;
-
-    // 2) Auto-gain suave hacia el target
-    float desired = juce::jlimit(0.25f, 4.0f, juce::Decibels::decibelsToGain(targetLUFS - meas));
-    autoGain = 0.98f * autoGain + 0.02f * desired;
-    float totalGain = inGain * autoGain;
-    float ceiling = juce::Decibels::decibelsToGain(ceilingDb);
-    float releaseCoeff = std::exp(-1.0f / (float)(sampleRate * releaseMs / 1000.f));
-    float peak = 0.f;
-
-    // 3) Limiter
-    for (int s = 0; s < N; s++)
-    {
-        float linkedPeak = 0.f;
-        for (int c = 0; c < Ch; c++)
-            linkedPeak = std::max(linkedPeak, std::abs(buffer.getSample(c, s) * totalGain));
-        envelope = std::max(linkedPeak, envelope * releaseCoeff);
-        if (envelope > ceiling) smoothedGain = std::min(smoothedGain, ceiling / envelope);
-        else smoothedGain += (1.0f - smoothedGain) * (1 - releaseCoeff) * 0.5f;
-        for (int c = 0; c < Ch; c++)
-        {
-            float y = buffer.getSample(c, s) * totalGain * smoothedGain;
-            peak = std::max(peak, std::abs(y));
-            buffer.setSample(c, s, juce::jlimit(-1.0f, 1.0f, y));
-        }
-    }
-    truePeakDb = 20 * std::log10(std::max(peak, 1e-9f));
-    grDb = 20 * std::log10(std::max(smoothedGain, 1e-4f));
-}
-
-juce::AudioProcessorEditor* ClubMasterAudioProcessor::createEditor()
-{
-    return new ClubMasterAudioProcessorEditor(*this);
-}
-
-void ClubMasterAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
-{
-    auto state = apvts.copyState();
-    std::unique_ptr<juce::XmlElement> xml(state.createXml());
-    copyXmlToBinary(*xml, destData);
-}
-
-void ClubMasterAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
-{
-    std::unique_ptr<juce::XmlElement> xmlState(getXmlFromBinary(data, sizeInBytes));
-    if (xmlState.get() != nullptr)
-        if (xmlState->hasTagName(apvts.state.getType()))
-            apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
-}
-
-juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
-{
-    return new ClubMasterAudioProcessor();
+    lufsLabel.setText("LUFS: " + juce::String(audioProcessor.getLUFS(), 1), juce::dontSendNotification);
+    peakLabel.setText("True Peak: " + juce::String(audioProcessor.getTruePeak(), 1) + " dB", juce::dontSendNotification);
+    grLabel.setText("Gain Reduction: " + juce::String(audioProcessor.getGR(), 1) + " dB", juce::dontSendNotification);
 }
